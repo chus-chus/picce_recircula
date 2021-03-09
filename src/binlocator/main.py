@@ -183,7 +183,7 @@ def pick_points_by_distance(distances, nBins):
         pickedPoint = None
         # search for furthest point to all of them if no point has been picked, else search for point furthest
         # from the already picked points
-        pointsToCompare = availablePoints if not pickedPoint else pickedPoints
+        pointsToCompare = availablePoints if pickedPoint is None else pickedPoints
         for pointID in availablePoints:
             distSum = 0
             for colID in pointsToCompare:

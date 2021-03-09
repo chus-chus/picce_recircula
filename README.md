@@ -8,9 +8,11 @@ We are **Picce**!
 - Paz Ripoll (paz.ripoll@estudiantat.upc.edu)
 - Estel Rueda (estel.rueda@upc.edu)
 
-This repository contains some of the software powering our proposal for the Recircula Challenge 2021. 
+This repository contains some of the software powering our proposal for the Recircula Challenge 2021.
 
-#### Bin Locator
+**Note**: tested on Python 3.8.6. 
+
+#### Bin Locator (description)
 
 Automatically places bins around a specified Sanitary Region given parameters such as the % of region infection coverage
 of the placements or the maximum number of bins allowed. The coverage of COVID-19 cases is maximized for the given number 
@@ -21,8 +23,7 @@ The granularity of reported infections is by [Basic Sanitary Area](https://catsa
 and the infections themselves are extracted from [here](https://analisi.transparenciacatalunya.cat/ca/Salut/Registre-de-casos-de-COVID-19-realitzats-a-Catalun/xuwf-dxjd).
 The Catalan farmacies are extracted from [here](https://analisi.transparenciacatalunya.cat/Salut/Cat-leg-de-farm-cies-de-Catalunya/f446-3fny).
 
-
-##### Usage
+#### Bin Locator (usage)
 
 First, navigate to the desired location and clone the repo:
 

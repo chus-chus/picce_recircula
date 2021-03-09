@@ -178,6 +178,8 @@ def compute_nbins_in_abs(points, absDensities, maxBins, exactBins):
             if nBins[i] > 1:
                 nBins[i] -= 1
             i -= 1
+    if sum(nBins) > maxBins:
+        warnings.warn('Maximum number of bins is too low for decent coverage, using {} bins'.format(sum(nBins)))
     return nBins
 
 

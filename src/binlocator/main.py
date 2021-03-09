@@ -1,9 +1,20 @@
+#!/usr/bin/python3
+
+""" MIT License, 2021
+
+    Cristina Aguilera (cristina.aguilera.gonzalez@estudiantat.upc.edu)
+    Jesus Antonanzas (jesus.maria.antonanzas@estudiantat.upc.edu)
+    Irene Josa (irene.josa@upc.edu)
+    Paz Ripoll (paz.ripoll@estudiantat.upc.edu)
+    Estel Rueda (estel.rueda@upc.edu) """
+
 import argparse
 import warnings
-import pandas as pd
-import numpy as np
 import gmplot
 import requests
+
+import pandas as pd
+import numpy as np
 
 from sodapy import Socrata
 from datetime import datetime, timedelta
@@ -16,9 +27,6 @@ POINTS_NAME = 'AvailableBinPoints'
 INCOMPLETE_POINTS_NAME = 'incompletePoints'
 POINTS_PICKED_LIST_NAME = 'pointsPicked'
 POINTS_PICKED_MAP_NAME = 'pointsPickedMap'
-
-# ABSs
-# https://catsalut.gencat.cat/web/.content/minisite/catsalut/proveidors_professionals/registres_catalegs/documents/poblacio-referencia.pdf
 
 
 def compute_distances(points):
@@ -87,7 +95,10 @@ def query_cases(client, sanitaryRegion, daysBefore):
 
 def download_process_drugstores(client, ABSs, apiKey, sanitaryRegion):
     """ Downloads catalan drug stores, picks the ones from the ABSs of the picked sanitary region
-    and searches for their coordinates, saving the info as a CSV for later use. """
+    and searches for their coordinates, saving the info as a CSV for later use.
+
+    https://analisi.transparenciacatalunya.cat/Salut/Cat-leg-de-farm-cies-de-Catalunya/f446-3fny
+    """
 
     resultsDrugStores = client.get_all("f446-3fny")
     rows = [pd.DataFrame.from_records(next(resultsDrugStores), index=[0])]
@@ -219,7 +230,7 @@ def assign_bins_to_abs(points, maxBins, exactBins, absDensities):
 if __name__ == '__main__':
 
     """ Assigns bins to points defined as coordinates such that the coverage of COVID-19 cases is maximized
-        for a given number of bins (locally, for each BCN ABS - Basic Sanitary Area). """
+        for a given number of bins (locally, for each ABS - Basic Sanitary Area). """
 
     parser = argparse.ArgumentParser(description="""Distribute bins so that cover is maximized in districts with
                                                  highest case density""")

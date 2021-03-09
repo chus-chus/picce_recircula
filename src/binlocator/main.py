@@ -4,6 +4,7 @@ import pandas as pd
 
 from sodapy import Socrata
 from datetime import datetime, timedelta
+from math import floor
 from tqdm import tqdm
 from geopy.geocoders import Nominatim
 
@@ -30,8 +31,8 @@ def abs_densities(cases, densityCover):
     # pick top ABSs
     cases = cases.sort_values(by='infectionDensity', ascending=False)
     density = 0
-    for i in range(len(cases)):
-        density += cases.iloc[i]['infectionDensity']
+    for i, infectionDensity in enumerate(cases['infectionDensity']):
+        density += infectionDensity
         if density >= densityCover:
             cases = cases.iloc[:i+1]
             break
@@ -100,8 +101,7 @@ def download_process_drugstores(client, ABSs):
     wrongDirections = []
     # todo improve coordinate searching
     print("Getting points' coordinates from maps...")
-    for row in tqdm(drugStoresDf.itertuples()):
-        direction = getattr(row, 'direction')
+    for direction in tqdm(drugStoresDf['direction']):
         address = geolocator.geocode(direction)
         if address is None:
             warnings.warn("Some addresses' coordinates could not be found.")
@@ -122,18 +122,33 @@ def download_process_drugstores(client, ABSs):
             file.write('%s\n' % listitem)
 
 
-def assign_points_to_abs(drugStoresDf, maxbins):
+def assign_bins_to_abs(absDensities, maxBins, exactBins):
+    """ Assign number of bins per ABS (bins proportional to the partial infection density of the picked ABSs)
+        Partial infection density is the proportion of cases among the chosen ABSs. """
+
+    absDensities['partInfectionDensity'] = absDensities['infectionDensity'] / sum(absDensities['infectionDensity'])
+    nBins = []
+    for partialDensity in absDensities['partInfectionDensity']:
+        binsPicked = round(partialDensity * maxBins) if round(partialDensity * maxBins) > 0 else 1
+        nBins.append(binsPicked)
+    if exactBins:
+        # the total number of bins used may be greater than the max. to better fit the partial infection densities
+        i = len(nBins) - 1
+        while i >= 0 and (sum(nBins)) > maxBins:
+            if nBins[i] > 1:
+                nBins[i] -= 1
+            i -= 1
+    return nBins
+
+
+def assign_points_to_abs(points, maxBins, exactBins, absDensities):
     """ Returns DF with coordinates of points to which bins can be assigned to inside each ABS. """
 
-    # todo given number of districts to use, density of cases in each district and max number of bins, generate number
-    #   of bins for each district (<= num farmacies for now)
-
-    if maxbins is None:
+    if maxBins is None:
         # assign bins to all points
-        pass
+        return points
     else:
-        # Assign number of bins per ABS
-        pass
+        absDensities['nBins'] = assign_bins_to_abs(absDensities, maxBins, exactBins)
         # Greedy cover algorithm
         # for each ABS
         #   compute distances between points
@@ -153,6 +168,7 @@ if __name__ == '__main__':
                                                  highest case density""")
 
     parser.add_argument('--maxbins', type=int, default=None, help='Number of bins to be used.')
+    parser.add_argument('--exactBins', type=bool, default=False, help='Should the number of bins used be exact?')
     parser.add_argument('--percCover', type=float, default=1, help='Density of infection cases covered.')
     parser.add_argument('--sanitaryRegion', type=int, default=7803, help='Sanitary Region Code.')
     parser.add_argument('--daysBefore', type=int, default=14, help='Days to look back cases from.')
@@ -178,8 +194,9 @@ if __name__ == '__main__':
     pointsDf = pd.read_csv(POINTS_PATH, dtype={'abscodi': str})
     pointsToPick = pointsDf['abscodi'].apply(lambda t: t in densityABSs)
     pointsDf = pointsDf.loc[pointsToPick, :]
+    pointsDf = pointsDf.loc[~pointsDf['latitude'].isna(), :]
 
     # assign bins to inside of the chosen ABSs
-    points = assign_points_to_abs(pointsDf, args.maxbins)
+    pointsAssigned = assign_points_to_abs(pointsDf, args.maxbins, args.exactBins, absDensitiesDf)
 
     # return coordinates or / and directions of bins, generate map

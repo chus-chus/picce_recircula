@@ -27,7 +27,7 @@ The Catalan farmacies are extracted from [here](https://analisi.transparenciacat
 First, navigate to the desired location and clone the repo:
 
 ```
-git clone .
+git clone https://github.com/chus-chus/picce_recircula.git
 ```
 
 Create a virtual environment of your choice and install the required packages:

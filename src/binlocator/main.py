@@ -1,23 +1,44 @@
 import argparse
 import warnings
 import pandas as pd
+import numpy as np
+import gmplot
+import requests
 
 from sodapy import Socrata
 from datetime import datetime, timedelta
-from math import floor
 from tqdm import tqdm
-from geopy.geocoders import Nominatim
+from geopy import distance as coord_distance
 
-POINTS_PATH = './data/binPoints.csv'
-INCOMPLETE_POINTS_PATH = './data/incompletePoints.csv'
-NOMINATIM_EMAIL = 'jesus.maria.antonanzas@estudiantat.upc.edu'
+DATA_PATH = './data/'
+IMAGES_PATH = './images/'
+POINTS_NAME = 'AvailableBinPoints'
+INCOMPLETE_POINTS_NAME = 'incompletePoints'
+POINTS_PICKED_LIST_NAME = 'pointsPicked'
+POINTS_PICKED_MAP_NAME = 'pointsPickedMap'
 
-# ABS
+# ABSs
 # https://catsalut.gencat.cat/web/.content/minisite/catsalut/proveidors_professionals/registres_catalegs/documents/poblacio-referencia.pdf
 
 
 def compute_distances(points):
-    return 0
+    """ Inserts N columns in the 'points' DF, where N is the number of points. Each column contains the distance to
+     a particular points in the DF (in km). """
+
+    distances = points
+    # create new distance columns
+    for pointID in points.index:
+        distances.loc[:, 'dist' + str(pointID)] = None
+    for pointID, latitude, longitude in zip(points.index, points['latitude'], points['longitude']):
+        for columnID in points.index:
+            if pointID == columnID:
+                distance = 0
+            else:
+                firstCoords = (latitude, longitude)
+                secondCoords = (points.loc[columnID, 'latitude'], points.loc[columnID, 'longitude'])
+                distance = coord_distance.distance(firstCoords, secondCoords).km
+            distances.loc[pointID, 'dist' + str(columnID)] = distance
+    return distances
 
 
 def abs_densities(cases, densityCover):
@@ -54,7 +75,7 @@ def query_cases(client, sanitaryRegion, daysBefore):
     resultsCases = client.get_all("xuwf-dxjd", where=queryCases)  # iterator
     rows = [pd.DataFrame.from_records(next(resultsCases), index=[0])]
 
-    print('Fetching COVID-19 cases...')
+    print('Fetching COVID-19 cases since {}...'.format(firstDate))
     for i, row in tqdm(enumerate(resultsCases, start=1)):
         rows.append(pd.DataFrame.from_records(row, index=[i]))
 
@@ -64,14 +85,14 @@ def query_cases(client, sanitaryRegion, daysBefore):
     return casesBCN
 
 
-def download_process_drugstores(client, ABSs):
+def download_process_drugstores(client, ABSs, apiKey, sanitaryRegion):
     """ Downloads catalan drug stores, picks the ones from the ABSs of the picked sanitary region
     and searches for their coordinates, saving the info as a CSV for later use. """
 
     resultsDrugStores = client.get_all("f446-3fny")
     rows = [pd.DataFrame.from_records(next(resultsDrugStores), index=[0])]
 
-    print('Fetching available bin points...')
+    print('\n Fetching available bin points...')
     for i, row in tqdm(enumerate(resultsDrugStores, start=1)):
         rows.append(pd.DataFrame.from_records(row, index=[i]))
 
@@ -95,68 +116,104 @@ def download_process_drugstores(client, ABSs):
     drugStoresDf = drugStoresDf.drop(['tipus_via', 'nom_via', 'num_via', 'codi_postal'], axis=1)
 
     # get coordinates from google maps queries
-    geolocator = Nominatim(user_agent=NOMINATIM_EMAIL)
     latitudes = []
     longitudes = []
     wrongDirections = []
-    # todo improve coordinate searching
-    print("Getting points' coordinates from maps...")
+    anyWrongPetition = False
+    print("\n Geocoding points' coordinates...")
     for direction in tqdm(drugStoresDf['direction']):
-        address = geolocator.geocode(direction)
-        if address is None:
-            warnings.warn("Some addresses' coordinates could not be found.")
+        direction = direction.replace(' ', '+')
+        apiURL = "https://maps.googleapis.com/maps/api/geocode/json?address={}&key={}".format(direction, apiKey)
+        addressInfo = requests.get(apiURL).json()
+        if addressInfo['status'] != 'OK':
+            warnings.warn('Some addresses coordinates could not be found: PETITION ERROR ' + addressInfo['status'])
             wrongDirections.append(direction)
             latitudes.append(None)
             longitudes.append(None)
+            anyWrongPetition = True
         else:
-            latitudes.append(address.latitude)
-            longitudes.append(address.longitude)
-
+            latitudes.append(addressInfo['results'][0]['geometry']['location']['lat'])
+            longitudes.append(addressInfo['results'][0]['geometry']['location']['lng'])
     drugStoresDf['latitude'] = latitudes
     drugStoresDf['longitude'] = longitudes
     print('Points saved.')
-    drugStoresDf.to_csv(POINTS_PATH, index=False)
-    warnings.warn('Please manually correct the addresses in {}'.format(INCOMPLETE_POINTS_PATH))
-    with open(INCOMPLETE_POINTS_PATH, 'w') as file:
-        for listitem in wrongDirections:
-            file.write('%s\n' % listitem)
+    drugStoresDf.to_csv(DATA_PATH + POINTS_NAME + str(sanitaryRegion) + '.csv', index=False)
+    if anyWrongPetition:
+        warnings.warn('Please manually correct the addresses in {}'.format(DATA_PATH + INCOMPLETE_POINTS_NAME + '.txt'))
+        with open(DATA_PATH + INCOMPLETE_POINTS_NAME + '.txt', 'w') as file:
+            for listitem in wrongDirections:
+                file.write('%s\n' % listitem)
 
 
-def assign_bins_to_abs(absDensities, maxBins, exactBins):
-    """ Assign number of bins per ABS (bins proportional to the partial infection density of the picked ABSs)
-        Partial infection density is the proportion of cases among the chosen ABSs. """
+def compute_nbins_in_abs(points, absDensities, maxBins, exactBins):
+    """ Compute the number of bins to go in each ABS (bins proportional to the partial infection density of the picked
+    ABSs). Partial infection density is the proportion of cases among the chosen ABSs. Note that there cannot
+    be more bins assigned than the number of points. """
 
     absDensities['partInfectionDensity'] = absDensities['infectionDensity'] / sum(absDensities['infectionDensity'])
     nBins = []
-    for partialDensity in absDensities['partInfectionDensity']:
-        binsPicked = round(partialDensity * maxBins) if round(partialDensity * maxBins) > 0 else 1
+    for ABScode, partialDensity in zip(absDensities.index, absDensities['partInfectionDensity']):
+        numberOfPoints = len(points.loc[points['abscodi'] == ABScode, :].index)
+        binsPicked = round(partialDensity * maxBins)
+        if binsPicked == 0:
+            binsPicked = 1
+        elif binsPicked > numberOfPoints:
+            binsPicked = numberOfPoints
         nBins.append(binsPicked)
-    if exactBins:
+    if exactBins and sum(nBins) > maxBins:
         # the total number of bins used may be greater than the max. to better fit the partial infection densities
         i = len(nBins) - 1
-        while i >= 0 and (sum(nBins)) > maxBins:
+        while i >= 0 and sum(nBins) > maxBins:
             if nBins[i] > 1:
                 nBins[i] -= 1
             i -= 1
     return nBins
 
 
-def assign_points_to_abs(points, maxBins, exactBins, absDensities):
+def pick_points_by_distance(distances, nBins):
+    """ Greedily pick 'nBins' points to maximize cover area in a given ABS.
+           1) find point furthest from all and pick it
+           2) find point furthest from the picked points (maximizes the sum of distances)
+           3) repeat '2' until no more points have to be picked """
+
+    pickedPoints = []
+    for i in range(nBins):
+        availablePoints = distances.index.tolist()
+        maxDist = -np.inf
+        pickedPoint = None
+        # search for furthest point to all of them if no point has been picked, else search for point furthest
+        # from the already picked points
+        pointsToCompare = availablePoints if not pickedPoint else pickedPoints
+        for pointID in availablePoints:
+            distSum = 0
+            for colID in pointsToCompare:
+                distSum += distances.loc[pointID, 'dist' + str(colID)]
+            if distSum > maxDist:
+                pickedPoint = pointID
+                maxDist = distSum
+        pickedPoints.append(pickedPoint)
+        distances.drop(index=pickedPoint, inplace=True)
+    return pickedPoints
+
+
+def assign_bins_to_abs(points, maxBins, exactBins, absDensities):
     """ Returns DF with coordinates of points to which bins can be assigned to inside each ABS. """
 
     if maxBins is None:
         # assign bins to all points
-        return points
+        return points.index.tolist()
     else:
-        absDensities['nBins'] = assign_bins_to_abs(absDensities, maxBins, exactBins)
+        absDensities['nBins'] = compute_nbins_in_abs(points, absDensities, maxBins, exactBins)
         # Greedy cover algorithm
-        # for each ABS
-        #   compute distances between points
-        #   1) find point furthest from all and pick it
-        #   2) find point furthest from the previous
-        #   3) find point furthest from the picked points (maximizes the sum of distances)
-        #   4) repeat '3' until no more points have to be picked
-    return 0
+        # for each ABS, compute points maximizing cover
+        finalPoints = []
+        print('Maximizing cover infection area...')
+        for densityABS, nBins in zip(absDensities.index, absDensities['nBins']):
+            ABSPoints = points.loc[points['abscodi'] == densityABS, :]
+            distances = compute_distances(ABSPoints)
+            pickedPoints = pick_points_by_distance(distances, nBins)
+            finalPoints += pickedPoints
+    return finalPoints
 
 
 if __name__ == '__main__':
@@ -173,6 +230,7 @@ if __name__ == '__main__':
     parser.add_argument('--sanitaryRegion', type=int, default=7803, help='Sanitary Region Code.')
     parser.add_argument('--daysBefore', type=int, default=14, help='Days to look back cases from.')
     parser.add_argument('--downloadPoints', type=bool, default=False, help='Should points be updated?')
+    parser.add_argument('--apiKey', type=str, default='', help='Google Maps API Key.')
 
     args = parser.parse_args()
 
@@ -188,15 +246,46 @@ if __name__ == '__main__':
 
     if args.downloadPoints:
         # Download points to position bins into
-        download_process_drugstores(dadesObertesCat, sanitaryRegionABSs)
+        warnings.warn('DOWNLOADING NEW PLACES MIGHT AFFECT GOOGLE MAPS QUOTA.')
+        download_process_drugstores(dadesObertesCat, sanitaryRegionABSs, args.apiKey, args.sanitaryRegion)
 
-    # Load points and pick only the ones relevant to current infection densities
-    pointsDf = pd.read_csv(POINTS_PATH, dtype={'abscodi': str})
-    pointsToPick = pointsDf['abscodi'].apply(lambda t: t in densityABSs)
-    pointsDf = pointsDf.loc[pointsToPick, :]
+    # Load points and pick only the ones relevant to current infection densities (of the specified sanitary region)
+    pointsDf = pd.read_csv(DATA_PATH + POINTS_NAME + str(args.sanitaryRegion) + '.csv', dtype={'abscodi': str})
+
+    # delete invalid points
     pointsDf = pointsDf.loc[~pointsDf['latitude'].isna(), :]
 
-    # assign bins to inside of the chosen ABSs
-    pointsAssigned = assign_points_to_abs(pointsDf, args.maxbins, args.exactBins, absDensitiesDf)
+    pointsToPick = pointsDf['abscodi'].apply(lambda t: t in densityABSs)
+    pointsDf = pointsDf.loc[pointsToPick, :]
 
-    # return coordinates or / and directions of bins, generate map
+    # Some ABSs may now not have points becasue of invalid (null) coordinates, so update the used ABSs
+    densityABSs = set(pointsDf['abscodi'])
+    absDensitiesDf = absDensitiesDf.loc[densityABSs, :].sort_values(by='infectionDensity', ascending=False)
+
+    # assign bins to points inside of the chosen ABSs
+    pointsIDs = assign_bins_to_abs(pointsDf, args.maxbins, args.exactBins, absDensitiesDf)
+    pointsAssigned = pointsDf.loc[pointsIDs, ['direction', 'latitude', 'longitude', 'abscodi']]
+    pointsAssigned.to_csv(DATA_PATH + POINTS_PICKED_LIST_NAME + '.csv', index=False)
+
+    # generate map
+    pointsAssigned.loc[:, 'partInfectionDensity'] = None
+    for ABS in densityABSs:
+        partInfectionDensity = absDensitiesDf.loc[ABS, 'partInfectionDensity']
+        pointsAssigned.loc[pointsAssigned['abscodi'] == ABS, 'partInfectionDensity'] = partInfectionDensity
+
+    gmap = gmplot.GoogleMapPlotter(lat=41.4036299, lng=2.1721671, zoom=12, apikey=args.apiKey)
+    gmap.scatter(pointsAssigned.loc[:, 'latitude'],
+                 pointsAssigned.loc[:, 'longitude'],
+                 color='cornflowerblue')
+    gmap.heatmap(pointsAssigned.loc[:, 'latitude'],
+                 pointsAssigned.loc[:, 'longitude'],
+                 radius=40,
+                 weights=pointsAssigned.loc[:, 'partInfectionDensity'] * 10,
+                 gradient=[(0, 0, 255, 0), (0, 255, 0, 0.9), (255, 0, 0, 1)])
+
+    gmap.draw(IMAGES_PATH + POINTS_PICKED_MAP_NAME + '.html')
+
+    print("""{} points assigned, see ({}) for a list of 
+    directions, ({}) for a map.""".format(len(pointsAssigned.index),
+                                          DATA_PATH + POINTS_PICKED_LIST_NAME,
+                                          IMAGES_PATH + POINTS_PICKED_MAP_NAME))

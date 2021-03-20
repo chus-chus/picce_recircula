@@ -61,9 +61,9 @@ python3 ./src/binlocator/main.py
 --sanitaryRegion: 'Sanitary Region Code.' type=int, default=7803
 --daysBefore: 'Number of previous days to account for infections from today.' type=int, default=14
 --downloadPoints: 'Should points be updated?' type=bool, default=False
---cleanPopulation: 'Is the pop. dataset to be cleaned?' type=bool, default=False)
---binCapacity: 'Bin capacity.' type=int, required=True)
---maskThrowRate: '# of masks thrown away per person per day.' type=float, default=1/3)
+--cleanPopulation: 'Is the pop. dataset to be cleaned?' type=bool, default=False
+--binCapacity: 'Bin capacity.' type=int, required=True
+--maskThrowRate: '# of masks thrown away per person per day.' type=float, default=1/3
 --apiKey: 'Google Maps API Key.' type=str, default=''
 ```
 
@@ -98,7 +98,7 @@ points (output/pointsPicked.csv)
 
 Note on downloading new points: Although rare, if for some reason the Google Maps API could not geocode an address (get its coordinates),
 a file (./data/incompletePoints.csv) will be created in ./data. It contains each point which could not be geocoded,
-and so it should be fixed manually (in ./data/AvailableBinPoints<SANITARY_REGION>.csv).
+and so it should be fixed manually in the file ./data/AvailableBinPoints<SANITARY_REGION>.csv (and rerun the execution).
 
 ![Example distribution of bins. Color represents local infection density.](images/mapExample.png)
 

@@ -52,9 +52,6 @@ python3 ./src/binlocator/main.py
 --apiKey <YOUR_GMAPS_API_KEY>
 ```
 
-A html map with the best points will be generated in `/images`. You will need a Google Maps API Key to get
-a map for non-developer use (without watermarks).
-
 **Available params**:
 
 ```
@@ -91,8 +88,13 @@ maximal. Finally, an approximation for the expected pickup date (when the bin wi
 of population that will throw their masks in those bins, (2) the number of masks each person will dispose of each day
 and (3) the capacity of the bins. 
 
-BL outputs a .csv file with street address, latitude, longitude and expected pickup date for each of the chosen 
-points (output/pointsPicked.csv), and the corresponding map (output/pointsPickedMap.html).
+#### BL output 
+- A .csv file with street address, latitude, longitude and expected pickup date for each of the chosen 
+points (output/pointsPicked.csv)
+  
+- The corresponding map (output/pointsPickedMap.html). You will need to specify the Google Maps API Key to get a map for 
+  non-developer use (without watermarks).
+
 
 Note on downloading new points: Although rare, if for some reason the Google Maps API could not geocode an address (get its coordinates),
 a file (./data/incompletePoints.csv) will be created in ./data. It contains each point which could not be geocoded,

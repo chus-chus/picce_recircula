@@ -1,14 +1,12 @@
 #!/usr/bin/python3
 
-""" MIT License, 2021
+""" MIT License, 2021 @
+     Cristina Aguilera (cristina.aguilera.gonzalez@estudiantat.upc.edu)
+     Jesus Antonanzas (jesus.maria.antonanzas@estudiantat.upc.edu)
+     Irene Josa (irene.josa@upc.edu)
+     Paz Ripoll (paz.ripoll@estudiantat.upc.edu)
+     Estel Rueda (estel.rueda@upc.edu) """
 
-    Cristina Aguilera (cristina.aguilera.gonzalez@estudiantat.upc.edu)
-    Jesus Antonanzas (jesus.maria.antonanzas@estudiantat.upc.edu)
-    Irene Josa (irene.josa@upc.edu)
-    Paz Ripoll (paz.ripoll@estudiantat.upc.edu)
-    Estel Rueda (estel.rueda@upc.edu) """
-
-import argparse
 import warnings
 import gmplot
 import requests
@@ -21,12 +19,10 @@ from datetime import datetime, timedelta
 from tqdm import tqdm
 from geopy import distance as coord_distance
 
-DATA_PATH = './data/'
-IMAGES_PATH = './images/'
-POINTS_NAME = 'AvailableBinPoints'
-INCOMPLETE_POINTS_NAME = 'incompletePoints'
-POINTS_PICKED_LIST_NAME = 'pointsPicked'
-POINTS_PICKED_MAP_NAME = 'pointsPickedMap'
+from clean_population import clean_pop
+from arguments import get_arguments
+from src.binlocator.keys import INCOMPLETE_POINTS_NAME, DATA_PATH, POINTS_NAME, POPULATION_DATA_NAME, \
+    POINTS_PICKED_LIST_NAME, POINTS_PICKED_MAP_NAME, OUTPUT_PATH
 
 
 def compute_distances(points):
@@ -221,7 +217,7 @@ def assign_bins_to_abs(points, maxBins, exactBins, absDensities):
         # for each ABS, compute points maximizing cover
         finalPoints = []
         print('Maximizing cover infection area...')
-        for densityABS, nBins in zip(absDensities.index, absDensities['nBins']):
+        for densityABS, nBins in tqdm(zip(absDensities.index, absDensities['nBins'])):
             ABSPoints = points.loc[points['abscodi'] == densityABS, :]
             distances = compute_distances(ABSPoints)
             pickedPoints = pick_points_by_distance(distances, nBins)
@@ -229,23 +225,25 @@ def assign_bins_to_abs(points, maxBins, exactBins, absDensities):
     return finalPoints
 
 
+def expected_pickup_date(binCapacity, populationDf, absDensities, maskThrowRate, popToThrowRatio):
+
+    def apply_timedelta(daysToFill):
+        return (datetime.today() + timedelta(days=daysToFill)).strftime('%d-%m-%Y')
+
+    joinedDensities = absDensities.join(populationDf)
+    usablePopulation = joinedDensities['pop'] * popToThrowRatio
+    masksPerAbsPerDay = usablePopulation * maskThrowRate
+    daysToFillBins = round((joinedDensities['nBins'] * binCapacity) / masksPerAbsPerDay)
+    # noinspection PyUnresolvedReferences
+    return daysToFillBins.apply(apply_timedelta).rename('pickupDate')
+
+
 if __name__ == '__main__':
 
     """ Assigns bins to points defined as coordinates such that the coverage of COVID-19 cases is maximized
         for a given number of bins (locally, for each ABS - Basic Sanitary Area). """
 
-    parser = argparse.ArgumentParser(description="""Distribute bins so that cover is maximized in districts with
-                                                 highest case density""")
-
-    parser.add_argument('--maxbins', type=int, default=None, help='Number of bins to be used.')
-    parser.add_argument('--exactBins', type=bool, default=False, help='Should the number of bins used be exact?')
-    parser.add_argument('--percCover', type=float, default=1, help='Density of infection cases covered.')
-    parser.add_argument('--sanitaryRegion', type=int, default=7803, help='Sanitary Region Code.')
-    parser.add_argument('--daysBefore', type=int, default=14, help='Days to look back cases from.')
-    parser.add_argument('--downloadPoints', type=bool, default=False, help='Should points be updated?')
-    parser.add_argument('--apiKey', type=str, default='', help='Google Maps API Key.')
-
-    args = parser.parse_args()
+    args = get_arguments()
 
     # Dades obertes de Catalunya client
     dadesObertesCat = Socrata("analisi.transparenciacatalunya.cat", None)
@@ -276,9 +274,22 @@ if __name__ == '__main__':
     absDensitiesDf = absDensitiesDf.loc[densityABSs, :].sort_values(by='infectionDensity', ascending=False)
 
     # assign bins to points inside of the chosen ABSs
+    print('Assigning bins to relevant points...')
     pointsIDs = assign_bins_to_abs(pointsDf, args.maxbins, args.exactBins, absDensitiesDf)
     pointsAssigned = pointsDf.loc[pointsIDs, ['direction', 'latitude', 'longitude', 'abscodi']]
-    pointsAssigned.to_csv(DATA_PATH + POINTS_PICKED_LIST_NAME + '.csv', index=False)
+
+    if args.cleanPopulation:
+        clean_pop()
+    population = pd.read_csv(DATA_PATH + POPULATION_DATA_NAME + '.csv', dtype={'abscodi': object})
+    population.set_index('abscodi', inplace=True)
+
+    print('Computing expected bin pickup dates...')
+    pickupDates = expected_pickup_date(args.binCapacity, population, absDensitiesDf, args.maskThrowRate,
+                                       args.popToThrowRatio)
+
+    pointsAssigned = pointsAssigned.join(pickupDates, on='abscodi')
+    
+    pointsAssigned.to_csv(OUTPUT_PATH + POINTS_PICKED_LIST_NAME + '.csv', index=False)
 
     # generate map
     pointsAssigned.loc[:, 'partInfectionDensity'] = None
@@ -293,12 +304,12 @@ if __name__ == '__main__':
     gmap.heatmap(pointsAssigned.loc[:, 'latitude'],
                  pointsAssigned.loc[:, 'longitude'],
                  radius=40,
-                 weights=pointsAssigned.loc[:, 'partInfectionDensity'] * 10,
+                 weights=pointsAssigned.loc[:, 'partInfectionDensity'] * 20,
                  gradient=[(0, 0, 255, 0), (0, 255, 0, 0.9), (255, 0, 0, 1)])
 
-    gmap.draw(IMAGES_PATH + POINTS_PICKED_MAP_NAME + '.html')
+    gmap.draw(OUTPUT_PATH + POINTS_PICKED_MAP_NAME + '.html')
 
     print("""{} points assigned, see ({}) for a list of 
     directions, ({}) for a map.""".format(len(pointsAssigned.index),
-                                          DATA_PATH + POINTS_PICKED_LIST_NAME,
-                                          IMAGES_PATH + POINTS_PICKED_MAP_NAME))
+                                          OUTPUT_PATH + POINTS_PICKED_LIST_NAME,
+                                          OUTPUT_PATH + POINTS_PICKED_MAP_NAME))

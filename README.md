@@ -64,6 +64,7 @@ python3 ./src/binlocator/main.py
 --cleanPopulation: 'Is the pop. dataset to be cleaned?' type=bool, default=False
 --binCapacity: 'Bin capacity.' type=int, required=True
 --maskThrowRate: '# of masks thrown away per person per day.' type=float, default=1/3
+--popToThrowRatio, 'Ratio of population expected to use the bins.' type=float, default=1/3
 --apiKey: 'Google Maps API Key.' type=str, default=''
 ```
 
